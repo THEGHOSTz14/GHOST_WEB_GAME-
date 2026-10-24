@@ -1,0 +1,17 @@
+# Godot
+.godot/
+.import/
+*.translation
+export_credentials.cfg
+
+# Downloads and build output
+.cache/
+builds/
+*.tpz
+*.tpz.part
+
+# Editor / OS
+*.tmp
+~$*
+.DS_Store
+Thumbs.db
