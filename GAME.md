@@ -282,19 +282,33 @@ cell because a finer camera move changes nothing a human can see.
   edge of the cone is soft, and `Ground.downwash()` returns the direction a plant
   is shoved — away from the hull, because that is where the air is going. Grass
   parts, crowns slide, a high-frequency rustle appears only under the drone, and
-  past 0.2 of the curve leaves come loose and tumble downwind. It costs no extra
-  redraws: the ground already redraws every frame while its animation is on.
-- **Trees are painted, not drawn.** An irregular silhouette of 7 lobes in three
-  tones — underside shadow, leaf body, sunlit outer mass — with a warm rim arc on
-  the lit side and dapples of lighter leaf clusters inside it. Trunks are a wide
-  line plus a shaded and a lit narrower line (a four-point trunk quad folds when
-  the crown slides sideways, and the triangulator rejects it with an engine
-  error). Pines get tiers with a zig-zag lower edge, because needles hang in
-  clumps and a straight line reads as a paper cut-out.
-- **Quality is two switches, not one.** The heavy lobe, rim and dapple pass needs
+  past 0.2 of the curve leaves come loose and tumble downwind.
+- **Trees are painted, not drawn.** Each leaf mass is a scalloped outline —
+  `Ground._blob()`, one 22-vertex polygon — and a crown is three of them nested:
+  underside shadow, leaf body, sunlit outer mass, each with a different scallop
+  twist so the edges never line up into one contour. Then dapples of lighter leaf
+  clusters on the lit side. Trunks are a wide line plus a shaded and a lit
+  narrower line (a four-point trunk quad folds when the crown slides sideways,
+  and the triangulator rejects that with an engine error). Pines get tiers with a
+  zig-zag lower edge, because needles hang in clumps and a straight line reads as
+  a paper cut-out.
+- **Blobs, not circle stacks, because the numbers said so.** Building the same
+  three tones from overlapping circles doubled the cost of a full map redraw:
+  129 k primitives and 35 ms of command recording, against 60 k and 21 ms for the
+  flat discs it replaced (measured on an RTX 3050 laptop GPU, desktop window).
+  Every polygon is triangulated on the CPU each time the map redraws, so the win
+  is fewer *submissions*, not fewer pixels. The scalloped version costs 68 k and
+  27 ms and looks better than either. `WIND_HZ` then caps wind redraws at 30/s,
+  because wind at 30 fps looks the same as wind at 60.
+- **Quality is two switches, not one.** The dapple and loose-leaf pass needs
   `_detailed` (few enough cells in view), and the wind clock needs `_anim`, which
   the fps controller turns off below ~45. An explicit `set_animated()` pins the
   second one: it is a decision, not a suggestion.
+- **What is left on the table.** The debug overlay's phase timers say a redraw is
+  ~14 ms of props, ~6 ms of roads, ~5.5 ms of terrain tint and ~0.4 ms of river.
+  Roads and most prop geometry never change between frames, so the next win is
+  caching them as textures drawn once, not re-triangulating the map thirty times
+  a second.
 
 ## 11. Art direction
 
