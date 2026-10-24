@@ -48,7 +48,7 @@ scripts/v3/View3D.gd       optional 3D presentation layer over the same sim
 
 platform/html_shell.html   exported page: y8 SDK + bridge + engine bootstrap
 platform/y8_bridge.js      window.DvDY8 -- the JS half of Y8Api
-tests/SelfTest.tscn        107 headless gameplay assertions
+tests/SelfTest.tscn        115 headless gameplay assertions
 assets/drone/              drone body + prop sprites (see assets/CREDITS.md)
 tools/                     build, serve, test, template-fetch, art prep
 builds/web/                exported page        builds/y8/*.zip  portal upload
@@ -74,6 +74,9 @@ builds/web/                exported page        builds/y8/*.zip  portal upload
 | Back to hands-free guns | `scripts/Drone.gd` | `AUTO_FIRE = true` |
 | More or fewer cars | `data/GroundDef.gd` | `CARS.count`, `speed_min/max` |
 | Add an animal species | `data/GroundDef.gd` | new `ANIMALS` entry + a `match` arm in `Wildlife._draw` |
+| Add a shooting bot | `data/Bots.gd` | new entry; `volley` picks the gun (`flak3`, `mine`, `rocket`), `roam` picks the movement. `Droid.gd` has no per-bot branches, but `tests/SelfTest.gd` validates the vocabulary, so a new mode has to be acknowledged there too |
+| Rocket or flak tuning | `scripts/DroidFire.gd` | `ROCKET_SPEED`, `ROCKET_TURN` (turn radius = speed / rate), `RK_START`, `FLAK_SPEED`, `MINE_SPEED` |
+| Turret slew rate | `scripts/Droid.gd` | `TURRET_RATE` (hull turning is `TURN_RATE`, deliberately faster) |
 | Bend the roads more | `data/GroundDef.gd` | `BEND_A`, `BEND_B`, their periods |
 | Drone size / spin / hubs | `scripts/Drone.gd` | `SPRITE_SPAN`, `PROP_BASE_RATE`, `ROTOR_HUBS`, `BODY_FORWARD` |
 | Re-run the artwork import | `tools/prep_drone_art.py` | `python tools/prep_drone_art.py <body.png> <prop.png>` |
@@ -129,7 +132,7 @@ export GODOT_BIN="/c/Users/Asus/AppData/Local/Programs/Godot/Godot_v4.7.2-stable
 |---|---|
 | `"$GODOT_BIN" --editor --path .` | open the project in the editor |
 | `"$GODOT_BIN" --path .` | run it as a desktop window |
-| `bash tools/run_tests.sh` | 107 assertions; fails on any engine error in the log |
+| `bash tools/run_tests.sh` | 115 assertions; fails on any engine error in the log |
 | `bash tools/build_web.sh` | headless release export → `builds/web/` + zip |
 | `bash tools/build_web.sh --debug` | same with debug templates (verbose console) |
 | `bash tools/build_web.sh --gz` | also emit `.gz` siblings for hosts that need them |

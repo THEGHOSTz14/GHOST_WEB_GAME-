@@ -256,28 +256,105 @@ func _draw_prop(kind: String, at: Vector2, r: float, phase: float) -> void:
 		"pine":
 			_draw_pine(at, radius, leaf, lit, trunk)
 		"house":
-			var w := radius * 1.5
-			var d := radius * 1.15
-			var body := Rect2(at - Vector2(w, d) * 0.5, Vector2(w, d))
-			# A building throws one solid shadow in the sun direction, not a blob.
-			draw_rect(Rect2(body.position + Art.shadow_offset(radius * 1.1), body.size),
-				Color(0.01, 0.015, 0.02, 0.3))
-			Art.contact(self, body.get_center() + Vector2(0, d * 0.5), w * 0.6, 0.8)
-			draw_rect(body, Art.shaded(def.leaf_lit, 0.5))
-			var roof := Rect2(body.position + Vector2(0, -d * 0.16), Vector2(w, d * 0.52))
-			draw_rect(roof, def.leaf)
-			# Ridge and eave shading give the roof a pitch instead of a flat quad.
-			draw_line(Vector2(roof.position.x, roof.position.y + roof.size.y * 0.5),
-				Vector2(roof.end.x, roof.position.y + roof.size.y * 0.5),
-				Art.sunlit(def.leaf, 1.4), 2.5)
-			draw_rect(body, Art.shaded(def.leaf, 1.4), false, 2.0)
-			draw_rect(Rect2(at + Vector2(-w * 0.1, d * 0.12), Vector2(w * 0.2, d * 0.38)),
-				trunk)
-			draw_rect(Rect2(body.position + Vector2(w * 0.12, d * 0.2),
-				Vector2(w * 0.16, d * 0.16)), Color(0.72, 0.84, 0.9, 0.85))
+			_draw_house(at, radius, def)
 		_:
 			# "blob": the broadleaf tree
 			_draw_tree(at, radius, leaf, lit, trunk)
+
+## Buildings seen from directly above show a roof and nothing else. The old version
+## drew a door and a window, which are on walls that face the ground from here:
+## every side of the building is invisible at this camera angle. So: an eave that
+## overhangs the wall it protects, hip faces meeting a centre ridge (or two gable
+## slopes on some plans), each face toned by how it faces the sun, shingle
+## courses, a ridge cap, and a chimney throwing its own short shadow.
+func _draw_house(at: Vector2, radius: float, def: Dictionary) -> void:
+	var salt := _plant_salt(at)
+	var hw := radius * 0.75
+	var hd := radius * 0.575
+	var eave := radius * 0.11
+	var rx := hw + eave
+	var ry := hd + eave
+	# The wall plate, inset under the overhang: what little of it shows reads as a
+	# shadow line under the eaves, which is the only clue that the building has
+	# thickness rather than being a decal.
+	draw_rect(Rect2(at - Vector2(hw, hd), Vector2(hw, hd) * 2.0),
+		Art.shaded(def.leaf_lit, 0.75))
+	# A roof sits high enough to throw a whole offset shape, not a contact blob.
+	draw_rect(Rect2(at - Vector2(rx, ry) + Art.shadow_offset(radius * 1.15),
+		Vector2(rx, ry) * 2.0), Color(0.02, 0.03, 0.04, 0.34))
+	Art.contact(self, at, radius * 0.72, 0.6)
+
+	var gable := _n(salt, 1) > 0.5
+	var hr: float = maxf(radius * 0.08, rx - ry * 0.75)
+	var polys: Array[PackedVector2Array] = []
+	var normals: Array[Vector2] = []
+	if gable:
+		polys.append(PackedVector2Array([at + Vector2(-rx, -ry), at + Vector2(rx, -ry),
+			at + Vector2(rx, 0.0), at + Vector2(-rx, 0.0)]))
+		normals.append(Vector2.UP)
+		polys.append(PackedVector2Array([at + Vector2(-rx, ry), at + Vector2(rx, ry),
+			at + Vector2(rx, 0.0), at + Vector2(-rx, 0.0)]))
+		normals.append(Vector2.DOWN)
+	else:
+		# Hip: two trapezoids and two triangles, all convex, all sharing one ridge.
+		polys.append(PackedVector2Array([at + Vector2(-rx, -ry), at + Vector2(rx, -ry),
+			at + Vector2(hr, 0.0), at + Vector2(-hr, 0.0)]))
+		normals.append(Vector2.UP)
+		polys.append(PackedVector2Array([at + Vector2(-rx, ry), at + Vector2(rx, ry),
+			at + Vector2(hr, 0.0), at + Vector2(-hr, 0.0)]))
+		normals.append(Vector2.DOWN)
+		polys.append(PackedVector2Array([at + Vector2(rx, -ry), at + Vector2(rx, ry),
+			at + Vector2(hr, 0.0)]))
+		normals.append(Vector2.RIGHT)
+		polys.append(PackedVector2Array([at + Vector2(-rx, -ry), at + Vector2(-rx, ry),
+			at + Vector2(-hr, 0.0)]))
+		normals.append(Vector2.LEFT)
+	var base_dark := Art.shaded(def.leaf, 1.2)
+	var base_lit := Art.sunlit(def.leaf, 1.25)
+	for i in polys.size():
+		var nrm: Vector2 = normals[i]
+		# One slope, one tone: the face whose normal points at the light is bright,
+		# the one pointing away is nearly black, and that contrast is what makes the
+		# roof read as solid instead of flat.
+		var t := clampf(0.5 + 0.62 * nrm.dot(-Art.SUN), 0.0, 1.0)
+		var face := base_dark.lerp(base_lit, t)
+		draw_colored_polygon(polys[i], face)
+		if _detailed:
+			# Shingle courses, one step darker each way up the slope.
+			var pts: PackedVector2Array = polys[i]
+			for k in range(1, 3):
+				var f := float(k) / 3.0
+				draw_line(pts[0].lerp(pts[pts.size() - 1], f),
+					pts[1].lerp(pts[pts.size() - 1], f),
+					Color(face.r, face.g, face.b, 0.35), maxf(1.0, radius * 0.022))
+	# Ridge and hip seams: the joints between faces are darker lines, not gaps.
+	draw_line(at + Vector2(-hr, 0.0), at + Vector2(hr, 0.0),
+		Art.sunlit(def.leaf, 1.6), maxf(1.4, radius * 0.05))
+	if not gable:
+		for corner in [Vector2(-rx, -ry), Vector2(rx, -ry), Vector2(rx, ry), Vector2(-rx, ry)]:
+			draw_line(at + corner, at + Vector2(signf(corner.x) * hr, 0.0),
+				Color(0.05, 0.06, 0.07, 0.35), maxf(1.0, radius * 0.026))
+	draw_polyline(PackedVector2Array([at + Vector2(-rx, -ry), at + Vector2(rx, -ry),
+		at + Vector2(rx, ry), at + Vector2(-rx, ry), at + Vector2(-rx, -ry)]),
+		Art.shaded(def.leaf, 1.5), maxf(1.2, radius * 0.03))
+
+	# Chimney: a small block on the cool side of the ridge with its own shadow and
+	# a soot stain down the slope, because nothing on a roof is flush with it.
+	var stack := at + Vector2(-hr * 0.45, -ry * 0.34)
+	var sh := Art.shadow_offset(radius * 0.5)
+	draw_rect(Rect2(stack + sh - Vector2(radius * 0.09, radius * 0.09),
+		Vector2(radius * 0.18, radius * 0.18)), Color(0.02, 0.03, 0.04, 0.3))
+	draw_rect(Rect2(stack - Vector2(radius * 0.11, radius * 0.11),
+		Vector2(radius * 0.22, radius * 0.22)), Art.shaded(def.trunk, 0.6))
+	draw_rect(Rect2(stack - Vector2(radius * 0.07, radius * 0.07),
+		Vector2(radius * 0.14, radius * 0.14)), def.trunk)
+	# A skylight on the lit slope, the one thing on a roof that is obviously glass.
+	if _n(salt, 7) > 0.35:
+		var sky := at + (-Art.SUN) * ry * 0.42 + Vector2(hr * 0.3, 0.0)
+		draw_rect(Rect2(sky - Vector2(radius * 0.1, radius * 0.06),
+			Vector2(radius * 0.2, radius * 0.12)), Color(0.74, 0.85, 0.9, 0.9))
+		draw_line(sky + Vector2(-radius * 0.1, 0.0), sky + Vector2(radius * 0.1, 0.0),
+			Color(0.2, 0.28, 0.34, 0.6), 1.0)
 
 # --------------------------------------------------------------------- water --
 func _draw_river(view: Rect2) -> void:

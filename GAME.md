@@ -158,13 +158,18 @@ chassis when it lands.
 | 1 | Walker | 1 | 68 | 1.0 | 100 | drifts between random waypoints | 0 s |
 | 2 | Runner | 1 | 165 | 0.7 | 150 | charges in a straight line at the drone, pauses 0.85 s, re-aims | 25 s |
 | 3 | Turret | 2 | 44 | 1.6 | 200 | crawls, stops, traverses, 0.9 s telegraph, fires a **3-round fan** of flak | 55 s |
-| 4 | Splitter | 3 | 56 | 1.3 | 300 | wanders; on death spawns 2 Walkers thrown out of the wreck | 100 s |
-| 5 | Shielder | 4 | 62 | 1.5 | 400 | arc orbits at ~69°/s and eats rounds arriving within ±55° of it; drops a homing mine every 5.5 s | 150 s |
-| 6 | Hauler (boss) | 22 | 40 | 6.0 | 2000 | crosses the plane, spread volley + mines, weak core exposed after each volley | 180 s — **Phase 3**, weight 0.0 so it never spawns yet |
+| 4 | Tank | 4 | 38 | 2.6 | 350 | rolls, halts, **traverses its turret on its own ring**, then launches one tracking rocket | 70 s |
+| 5 | Splitter | 3 | 56 | 1.3 | 300 | wanders; on death spawns 2 Walkers thrown out of the wreck | 100 s |
+| 6 | Shielder | 4 | 62 | 1.5 | 400 | arc orbits at ~69°/s and eats rounds arriving within ±55° of it; drops a homing mine every 5.5 s | 150 s |
+| 7 | Hauler (boss) | 22 | 40 | 6.0 | 2000 | crosses the plane, spread volley + mines, weak core exposed after each volley | 180 s — **Phase 3**, weight 0.0 so it never spawns yet |
 
 
 Flak travels 205 units/s against a drone doing 460, mines 120 units/s turning no
-faster than 85°/s and expire after 5 s. Rounds leave the drone at 700 units/s,
+faster than 85°/s and expire after 5 s. A rocket leaves the tube at 70 units/s and
+boosts to 195 over about a quarter second, steering at 52°/s -- which is a turn
+radius of ~210 units, the number that makes it dodgeable rather than a verdict. Its
+smoke trail is drawn from where it has actually been, so you can trace the shot back
+to the Tank that fired it even after the round is gone. Rounds leave the drone at 700 units/s,
 steer at 200°/s and live 1.9 s. All of it is tuned so a lateral dodge beats a
 reaction check: the player has time to decide, but not time to idle.
 
@@ -319,6 +324,12 @@ bot's fell down-left and a car's fell nowhere, and the eye reads that as fake
 even though no single object looks wrong on its own. Editing `Art.SUN` relights
 the whole map.
 
+- **Buildings are roofs.** From directly above, a house is a roof and nothing else:
+  an eave overhanging the wall plate, hip faces meeting a centre ridge (or two gable
+  slopes on some plans), each face toned by how its normal faces the sun, shingle
+  courses, a ridge cap, a chimney with its own shadow and a skylight on the lit
+  slope. The first version had a door and a window on it, which is a front elevation:
+  every wall of the building faces the ground from this camera.
 - **Ground** takes the detail pass: two-tone grass with dirt patches, per-cell
   tufts bent by the wind, pebbles and flowers sitting in their own contact
   shadow, faceted rocks with a lit face and a shaded one, pines in tiers,

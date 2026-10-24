@@ -33,6 +33,9 @@ const REACT := 0.45
 ## Chassis heading slews at a limited rate. Treads have to slip to turn faster
 ## than this, and that slip is exactly what makes a bot look like it is turning.
 const TURN_RATE := 3.2
+## A gun on a ring turns far slower than the hull it sits on: the whole point of a
+## Tank fight is circling inside its own traversal.
+const TURRET_RATE := 1.5
 ## Barrel kick, in logical units, and how long the muzzle flash survives.
 const RECOIL := 6.0
 const FLASH_TIME := 0.09
@@ -65,6 +68,8 @@ var drone: Drone
 var knock := Vector2.ZERO
 ## -1..1 sideways slip, which leans the chassis and drags one tread behind.
 var lean := 0.0
+## Turret ring angle, independent of `facing`. Only volley "rocket" uses it.
+var turret_angle := 0.0
 var recoil := 0.0
 var flash := 0.0
 ## Tread pattern scroll, driven by distance travelled rather than by time, so the
@@ -87,6 +92,8 @@ func configure(kind: String, at: Vector2, target_drone: Drone) -> void:
 	splits = int(stats.get("splits", 0))
 	drone = target_drone
 	position = at
+	turret_angle = (drone.position - at).angle() \
+		if drone != null and is_instance_valid(drone) else randf() * TAU
 	waypoint = Layout.rand_interior()
 	facing = (waypoint - at).normalized() if waypoint != at else Vector2.RIGHT
 	charge_left = RUNNER_CHARGE
@@ -119,21 +126,27 @@ func _physics_process(delta: float) -> void:
 	var pace := speed * Game.speed_scale() * unit
 	var heading := Vector2.ZERO
 
-	match id:
-		"runner":
+	# Switched by the roster's own fields, never by id: a new bot that crawls,
+	# halts to aim and fires a rocket gets all of that from data/Bots.gd alone.
+	match roam:
+		"charge":
 			heading = _runner(delta)
-		"turret":
-			# Traversing on the gun means the drone can break the aim by moving
-			# while it charges; an instant snap would make the telegraph a lie.
+		_:
 			if is_charging():
-				_aim_at_drone(delta)
+				# A gun on a ring slews independently of the hull, so circling a
+				# Tank breaks its aim in a way that running straight away does not.
+				# A turret bot has the same problem on a slower clock.
+				if volley == "rocket":
+					_traverse_turret(delta)
+				else:
+					_aim_at_drone(delta)
+				# Only a crawler actually stops to aim; the rest keep pacing.
+				if roam != "crawl":
+					heading = _wander()
 			else:
 				heading = _wander()
-		"shielder":
-			heading = _wander()
-			shield_angle += SHIELD_SPEED * delta
-		_:
-			heading = _wander()
+	if arc:
+		shield_angle += SHIELD_SPEED * delta
 
 	_steer(heading, pace, delta)
 	_lean_into(pace, delta)
@@ -208,6 +221,21 @@ func _aim_at_drone(delta: float) -> void:
 		if to.length_squared() > 0.01:
 			_turn_toward(to.normalized(), delta)
 
+## The same honesty on the turret ring: the gun slews at TURRET_RATE no matter where
+## the hull is pointing, so a slow orbit of the bot outruns its aim.
+func _traverse_turret(delta: float) -> void:
+	if drone == null or not is_instance_valid(drone):
+		return
+	var to := drone.position - position
+	if to.length_squared() < 0.01:
+		return
+	var step := clampf(wrapf(to.angle() - turret_angle, -PI, PI),
+		-TURRET_RATE * delta, TURRET_RATE * delta)
+	turret_angle = wrapf(turret_angle + step, -PI, PI)
+
+func _turret_dir() -> Vector2:
+	return Vector2.RIGHT.rotated(turret_angle)
+
 func _dir_to_drone() -> Vector2:
 	if drone == null or not is_instance_valid(drone):
 		return facing
@@ -232,6 +260,12 @@ func _fire_volley(unit: float) -> void:
 				fire_requested.emit(origin, base.rotated(offset), "flak")
 		"mine":
 			fire_requested.emit(origin, base, "mine")
+		"rocket":
+			# Fired down the barrel the turret actually ended up pointing at, not at
+			# where the drone is: the gun can still be catching up when it goes off.
+			var aimed := _turret_dir()
+			origin = position + aimed * size.x * 0.68 * unit
+			fire_requested.emit(origin, aimed, "rocket")
 
 ## The shielder's arc orbits it, so whether a round lands depends on where it
 ## arrived from -- hold the lock and take the shot when the gap faces you.
@@ -337,11 +371,37 @@ func _draw() -> void:
 			_flash(Vector2(s * 0.60, 0.0) + back, s * (0.26 + 0.34 * flash / FLASH_TIME))
 	else:
 		draw_circle(Vector2(s * 0.22, 0.0), s * 0.11, Color(0.95, 0.9, 0.6))
+
+	if volley == "rocket":
+		# Turret ring on top of the hull, with a barrel that kicks back along its
+		# own axis when it fires. Drawn inside the chassis transform, so the extra
+		# rotation is only the difference back to the world angle the ring is at --
+		# the gun can be pointing somewhere the chassis has never been.
+		draw_set_transform(Vector2.ZERO, turret_angle - heading, Vector2.ONE * unit)
+		var ts := s * 0.6
+		var ring := PackedVector2Array()
+		for i in 8:
+			ring.append(Vector2.RIGHT.rotated(float(i) * PI * 0.25 + PI * 0.125) * ts)
+		draw_colored_polygon(ring, Art.shaded(body, 0.45))
+		var back := Vector2(-RECOIL * recoil, 0.0)
+		draw_rect(Rect2(Vector2(ts * 0.55, -s * 0.06) + back, Vector2(s * 0.6, s * 0.12)),
+			Art.shaded(body, 0.95))
+		draw_rect(Rect2(Vector2(ts * 0.42, -s * 0.12) + back, Vector2(s * 0.18, s * 0.24)),
+			Art.sunlit(body, 0.7))
+		draw_circle(Vector2(-ts * 0.18, 0.0), ts * 0.26, Art.sunlit(body, 0.9))
+		if flash > 0.0:
+			_flash(Vector2(ts * 0.55 + s * 0.68, 0.0) + back,
+				s * (0.3 + 0.4 * flash / FLASH_TIME))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 	if is_charging():
-		var aim := (_dir_to_drone() * s * 4.0) * unit
-		draw_line(Vector2.ZERO, aim, Color(1.0, 0.35, 0.2,
+		# The telegraph follows the barrel that is actually aiming, not the drone:
+		# watching a turret catch up is the warning, and it is honest about whether
+		# the shot is coming at you yet.
+		var dir := _turret_dir() if volley == "rocket" else _dir_to_drone()
+		var tail := dir * s * 0.9 if volley == "rocket" else Vector2.ZERO
+		var aim := tail + dir * s * 3.6 * unit
+		draw_line(tail, aim, Color(1.0, 0.35, 0.2,
 			0.3 + 0.6 * (1.0 - fire_timer / TELEGRAPH)), 3.0 * unit)
 	if arc:
 		draw_arc(Vector2.ZERO, s * 0.85 * unit, shield_angle - SHIELD_ARC,

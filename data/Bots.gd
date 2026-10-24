@@ -20,6 +20,8 @@ extends RefCounted
 ##   appears_at  seconds of run time before it can spawn (no waves)
 ##   fire      seconds between attacks; 0.0 = never shoots
 ##   volley    "none" | "flak3" (three-shell fan) | "mine" (steering)
+##             | "rocket" (slow tracking shell, fired by the turret on its own
+##             ring rather than by the hull -- see Droid._traverse_turret)
 ##   roam      "waypoint" (wanders) | "charge" (sprints at the drone)
 ##             | "crawl" (slow wander, stops to aim)
 ##   splits    how many of itself spawn where it dies (0 = none)
@@ -53,6 +55,14 @@ const CATALOG := {
 		"mass": 1.6,
 		"color": Color(0.55, 0.72, 0.98),
 		"desc": "Stops, telegraphs for 0.7 s, fires a three-shell flak fan.",
+	},
+	"tank": {
+		"name": "Tank", "hp": 4, "speed": 38.0, "score": 350,
+		"w": 54.0, "h": 46.0, "appears_at": 70.0, "fire": 5.4, "volley": "rocket",
+		"roam": "crawl", "splits": 0, "arc": false, "weight": 2.5,
+		"mass": 2.6,
+		"color": Color(0.42, 0.45, 0.32),
+		"desc": "Rolls to a halt, traverses its turret, then launches a tracking rocket.",
 	},
 	"splitter": {
 		"name": "Splitter", "hp": 3, "speed": 56.0, "score": 300,

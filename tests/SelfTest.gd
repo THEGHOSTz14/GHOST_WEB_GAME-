@@ -47,6 +47,10 @@ var turn_bot: Node = null
 var turn_from := Vector2.RIGHT
 var split_at := Vector2.ZERO
 var shove_bot: Node = null
+var _tank_from := 0.0
+var _tank_facing := Vector2.ZERO
+var tank_watch := false
+var _tank_elapsed := 0.0
 
 func _ready() -> void:
 	get_tree().paused = false
@@ -91,6 +95,7 @@ func build_script() -> void:
 		_wait(0.8), _assert_bots_reach_their_pace,
 		_knockback_setup, _wait(0.15), _assert_turn_is_rate_limited,
 		_wait(1.25), _assert_turn_completes,
+		_tank_setup, _wait(0.4), _assert_tank_traverses, _assert_rocket_leaves_smoke,
 		_splitter_setup, _wait(0.15), _assert_splitter_halves_scatter,
 		_assert_death_leaves_marks, _assert_grade_sits_behind_hud,
 		_cleanup_bots,
@@ -104,7 +109,10 @@ func _wait(seconds: float) -> Callable:
 	return func() -> void: wait_left = seconds
 
 func _process(delta: float) -> void:
-	peak_droids = maxi(peak_droids, Game.live_droids)
+	peak_droids = maxi(peak_droids, Game.live_droids)	# Accumulated before the wait countdown returns early: this has to cover the
+	# frames the test spends waiting, because the simulation does not pause for them.
+	if tank_watch:
+		_tank_elapsed += delta
 	var view = main.get("view") if main != null else null
 	if view != null and int(view.get("deaths_animated")) > 0:
 		death_seen = true
@@ -312,7 +320,7 @@ func _roster_sane() -> bool:
 		for key in ["hp", "speed", "score", "w", "h", "appears_at", "fire", "weight", "color"]:
 			if not d.has(key):
 				return false
-		if not ["none", "flak3", "mine"].has(String(d.get("volley", ""))):
+		if not ["none", "flak3", "mine", "rocket"].has(String(d.get("volley", ""))):
 			return false
 		if not ["waypoint", "charge", "crawl"].has(String(d.get("roam", ""))):
 			return false
@@ -652,10 +660,15 @@ func _canopy_setup() -> void:
 		report("ground layer exists", false)
 		return
 	_canopy_spots = [drone.position + Vector2(30.0, 20.0),
-		drone.position + Vector2(-70.0, 40.0), drone.position + Vector2(90.0, -50.0)]
+		drone.position + Vector2(-70.0, 40.0), drone.position + Vector2(90.0, -50.0),
+		drone.position + Vector2(-140.0, -30.0)]
 	ground.call("add_prop", "tree", _canopy_spots[0], 44.0)
 	ground.call("add_prop", "pine", _canopy_spots[1], 38.0)
 	ground.call("add_prop", "bush", _canopy_spots[2], 20.0)
+	# A building is the only prop made entirely of polygons that share edges, so it
+	# is in the test set to prove the hip and gable faces triangulate. A folded roof
+	# face would show up as an engine error and fail the run.
+	ground.call("add_prop", "house", _canopy_spots[3], 60.0)
 
 func _canopy_checks() -> void:
 	var ground = main.get("ground")
@@ -685,7 +698,8 @@ func _canopy_checks() -> void:
 	report("no hull on the map means no shake",
 		(ground.call("downwash", Vector2(60.0, 0.0), Vector2.INF, 40.0) as Vector2)
 		== Vector2.ZERO)
-	report("the pushed wood still draws", ground.props_in_view() >= 3,
+	report("the pushed wood and the roofed house all draw",
+		ground.props_in_view() >= 4,
 		"%d props over %d cells" % [ground.props_in_view(), ground.cells_in_view()])
 	# Adaptive quality: animation off freezes the wind clock, so a struggling phone
 	# loses the movement rather than the frame rate. The comparison has to happen
@@ -705,6 +719,85 @@ func _canopy_frozen() -> void:
 	ground.call("set_animated", true)
 	for spot in _canopy_spots:
 		ground.call("remove_prop_near", spot, 60.0)
+
+# -------------------------------------------------------------------- tanks ----
+var tank: Node = null
+var rocket: Node = null
+
+func _assert_rocket_balanced() -> void:
+	report("a Tank is in the roster, heavy and slow",
+		Bots.CATALOG.has("tank") and float(Bots.def("tank").mass) >= 2.0
+		and float(Bots.def("tank").speed) <= 45.0,
+		"mass=%s speed=%s" % [Bots.def("tank").mass, Bots.def("tank").speed])
+	report("rockets leave the tube far slower than a flak shell",
+		DroidFire.RK_START < DroidFire.FLAK_SPEED * 0.4,
+		"%d vs %d" % [DroidFire.RK_START, DroidFire.FLAK_SPEED])
+	# speed / turn-rate is the radius of the circle the round can fly. Under about
+	# 180 units nothing in the game could get out of the way in time.
+	var radius := DroidFire.ROCKET_SPEED / DroidFire.ROCKET_TURN
+	report("but its turn radius is wide enough to dodge", radius > 180.0,
+		 "%.0f units" % radius)
+
+func _tank_setup() -> void:
+	var unit: float = Layout.unit
+	_assert_rocket_balanced()
+	tank = main.get("spawner").call("spawn", "tank",
+		drone.position + Vector2(260.0 * unit, 0.0))
+	tank.set("hp", 99)
+	tank.set("speed", 0.0)
+	# Point the gun a full half-turn away from the drone and make it charge: what
+	# happens next is traversal, not aiming. The drone sits due -X from the tank, so
+	# 0.0 is the barrel pointing the wrong way.
+	tank.set("turret_angle", 0.0)
+	tank.set("fire_timer", 0.6)
+	_tank_from = 0.0
+	_tank_facing = tank.get("facing")
+	_tank_elapsed = 0.0
+	tank_watch = true
+	rocket = null
+	main.call("_spawn_fire", drone.position + Vector2(220.0 * unit, 60.0 * unit),
+		Vector2.LEFT, "rocket")
+	for f in main.get("fires"):
+		if f.active and String(f.get("mode")) == "rocket":
+			rocket = f
+
+## A turret bot that snapped its aim to face you would be unavoidable. This one has
+## to swing around the ring at its own rate -- and the hull does not have to follow,
+## which is the difference between a gun and a camera on a tripod.
+func _assert_tank_traverses() -> void:
+	if tank == null or not is_instance_valid(tank):
+		report("tank survived the traversal window", false)
+		return
+	tank_watch = false
+	var now: float = tank.get("turret_angle")
+	var moved := absf(wrapf(now - _tank_from, -PI, PI))
+	# Half a turn away and only ~0.5 s of clock: the ring cannot have caught up yet,
+	# which is exactly the window a player uses to slip behind the gun.
+	var ceiling := Droid.TURRET_RATE * _tank_elapsed + 0.02
+	report("the turret swings toward the drone", moved > 0.25, "%.2f rad" % moved)
+	report("and cannot slew faster than its ring allows", moved <= ceiling,
+		"%.2f rad in %.2f s, ceiling %.2f" % [moved, _tank_elapsed, ceiling])
+	report("the hull does not have to follow the gun",
+		(tank.get("facing") as Vector2).distance_to(_tank_facing) < 0.02,
+		str((tank.get("facing") as Vector2).round()))
+
+func _assert_rocket_leaves_smoke() -> void:
+	if rocket == null or not is_instance_valid(rocket) or not rocket.active:
+		report("the test rocket is still in flight", false)
+		return
+	var trail: Array = rocket.get("trail")
+	report("a rocket leaves a smoke trail you can trace back", trail.size() >= 3,
+		"%d puffs, speed %.0f" % [trail.size(),
+			(rocket.get("velocity") as Vector2).length()])
+	report("and after 0.4 s it is at speed but still slower than a flak shell",
+		(rocket.get("velocity") as Vector2).length()
+		> DroidFire.RK_START * Layout.unit * 1.4
+		and (rocket.get("velocity") as Vector2).length()
+		< DroidFire.FLAK_SPEED * Layout.unit,
+		"%.0f vs flak %.0f" % [(rocket.get("velocity") as Vector2).length(),
+			DroidFire.FLAK_SPEED * Layout.unit])
+	tank.set("fire_timer", 9999.0)
+	tank.queue_free()
 
 # ------------------------------------------------------------------- physics ----
 func _cap_speed() -> float:
