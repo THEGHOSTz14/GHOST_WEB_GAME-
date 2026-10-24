@@ -277,6 +277,24 @@ cell because a finer camera move changes nothing a human can see.
 - Both are scenery with a fixed population: anything that drifts more than
   `RECALL` from the camera is re-placed near it, which is what keeps an endless
   map populated without an unbounded list.
+- **The drone's rotors blow the map around.** `Ground.DOWNWASH` (210 units) is the
+  radius the downwash reaches; `Ground.gust(dist)` falls off as the square so the
+  edge of the cone is soft, and `Ground.downwash()` returns the direction a plant
+  is shoved — away from the hull, because that is where the air is going. Grass
+  parts, crowns slide, a high-frequency rustle appears only under the drone, and
+  past 0.2 of the curve leaves come loose and tumble downwind. It costs no extra
+  redraws: the ground already redraws every frame while its animation is on.
+- **Trees are painted, not drawn.** An irregular silhouette of 7 lobes in three
+  tones — underside shadow, leaf body, sunlit outer mass — with a warm rim arc on
+  the lit side and dapples of lighter leaf clusters inside it. Trunks are a wide
+  line plus a shaded and a lit narrower line (a four-point trunk quad folds when
+  the crown slides sideways, and the triangulator rejects it with an engine
+  error). Pines get tiers with a zig-zag lower edge, because needles hang in
+  clumps and a straight line reads as a paper cut-out.
+- **Quality is two switches, not one.** The heavy lobe, rim and dapple pass needs
+  `_detailed` (few enough cells in view), and the wind clock needs `_anim`, which
+  the fps controller turns off below ~45. An explicit `set_animated()` pins the
+  second one: it is a decision, not a suggestion.
 
 ## 11. Art direction
 

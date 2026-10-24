@@ -74,6 +74,7 @@ func build_script() -> void:
 		_resize(Vector2(430, 900)), _wait(0.25), _assert_portrait, _ground_checks,
 		_resize(Vector2(2560, 1000)), _wait(0.25), _assert_ultrawide,
 		_resize(Vector2(1280, 720)), _wait(0.25),
+		_canopy_setup, _wait(0.5), _canopy_checks, _canopy_frozen,
 		# Flight and steering physics (GAME.md §4, §5). Each step is a slice of
 		# simulated time, so the whole block reads like the ramp curve it tests.
 		_flight_setup, _hold_key("move_right", true), _wait(0.30),
@@ -638,6 +639,72 @@ func _assert_ultrawide() -> void:
 	report("ultrawide keeps the camera centred",
 		Layout.view.get_center().distance_to(Layout.camera) < 0.5)
 	_assert_camera_frames_plane("ultrawide")
+
+# ------------------------------------------------------------------- canopy ----
+## Hand-placed foliage directly under the hull, so the pushed geometry is drawn
+## for real rather than only computed.
+var _canopy_spots: Array = []
+var _wind_frozen := 0.0
+
+func _canopy_setup() -> void:
+	var ground = main.get("ground")
+	if ground == null:
+		report("ground layer exists", false)
+		return
+	_canopy_spots = [drone.position + Vector2(30.0, 20.0),
+		drone.position + Vector2(-70.0, 40.0), drone.position + Vector2(90.0, -50.0)]
+	ground.call("add_prop", "tree", _canopy_spots[0], 44.0)
+	ground.call("add_prop", "pine", _canopy_spots[1], 38.0)
+	ground.call("add_prop", "bush", _canopy_spots[2], 20.0)
+
+func _canopy_checks() -> void:
+	var ground = main.get("ground")
+	if ground == null:
+		return
+	var reach: float = ground.call("downwash_radius")
+	report("downwash is full strength directly overhead",
+		is_equal_approx(float(ground.call("gust", 0.0)), 1.0))
+	report("it falls off as the square of the distance",
+		absf(float(ground.call("gust", reach * 0.5)) - 0.25) < 0.001,
+		"%.3f at half reach" % float(ground.call("gust", reach * 0.5)))
+	report("and lets go entirely past the cone", float(ground.call("gust", reach)) <= 0.0)
+	var rising := false
+	var last := 1.0
+	for i in 12:
+		var v: float = ground.call("gust", reach * float(i) / 12.0)
+		if v > last + 0.0001:
+			rising = true
+		last = v
+	report("the falloff never climbs as you move away", not rising)
+	var shove: Vector2 = ground.call("downwash", Vector2(60.0, 0.0), Vector2.ZERO, 40.0)
+	report("foliage is pushed away from the hull",
+		shove.x > 1.0 and shove.y == 0.0, str(shove.round()))
+	report("a farther tree moves less",
+		(ground.call("downwash", Vector2(160.0, 0.0), Vector2.ZERO, 40.0) as Vector2)
+		.length() < shove.length())
+	report("no hull on the map means no shake",
+		(ground.call("downwash", Vector2(60.0, 0.0), Vector2.INF, 40.0) as Vector2)
+		== Vector2.ZERO)
+	report("the pushed wood still draws", ground.props_in_view() >= 3,
+		"%d props over %d cells" % [ground.props_in_view(), ground.cells_in_view()])
+	# Adaptive quality: animation off freezes the wind clock, so a struggling phone
+	# loses the movement rather than the frame rate. The comparison has to happen
+	# after a wait, which is why it is a second step.
+	ground.call("set_animated", false)
+	_wind_frozen = ground.get("_wind")
+	wait_left = 0.35
+
+func _canopy_frozen() -> void:
+	var ground = main.get("ground")
+	if ground == null:
+		return
+	var after: float = ground.get("_wind")
+	report("switching animation off stops the wind",
+		is_equal_approx(after, _wind_frozen) and not bool(ground.call("animated")),
+		"_wind %.2f -> %.2f" % [_wind_frozen, after])
+	ground.call("set_animated", true)
+	for spot in _canopy_spots:
+		ground.call("remove_prop_near", spot, 60.0)
 
 # ------------------------------------------------------------------- physics ----
 func _cap_speed() -> float:

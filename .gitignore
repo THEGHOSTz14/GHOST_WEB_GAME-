@@ -15,3 +15,6 @@ builds/
 ~$*
 .DS_Store
 Thumbs.db
+
+# Generated scratch images that are not game assets
+vibe_images/

@@ -70,6 +70,7 @@ var pickups: Array = []
 
 var shake := 0.0
 var fx_clock := 0.0
+var _perf_timer := 0.0
 var dead_time := 0.0
 var pending_revive := false
 var debug := false
@@ -229,6 +230,17 @@ func _process(delta: float) -> void:
 			Engine.get_frames_per_second(), int(Layout.width()), int(Layout.height()),
 			Layout.unit, Game.live_droids, lock_id, ground.props_in_view(),
 			ground.cells_in_view()]
+		_perf_timer += delta
+		if _perf_timer >= 1.0:
+			_perf_timer = 0.0
+			# The whole map is one CanvasItem, so the cost of a detail pass shows up
+			# as primitives per frame rather than draw calls. Print it: the ground is
+			# prettier than it is cheap now, and that trade needs watching.
+			print("perf fps=%d  primitives=%d  draw_calls=%d  props=%d  cells=%d  droids=%d" % [
+				Engine.get_frames_per_second(),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
+				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
+				ground.props_in_view(), ground.cells_in_view(), Game.live_droids])
 
 func _shake(seconds: float) -> void:
 	shake = maxf(shake, seconds)
