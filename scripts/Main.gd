@@ -186,6 +186,30 @@ func _begin_run() -> void:
 	_reposition_drone()
 	Game.start_run()
 	Y8Api.game_started()
+	_spawn_dev_request()
+
+## Reads `-- --spawn=tank` from the command line, which a browser cannot do, so a
+## portal build can never receive it. The pressure curve says a Tank may not appear
+## before 70 s -- and that gate is exactly what a test session wants to skip without
+## editing the balance numbers to look at one bot.
+func dev_spawn(args: PackedStringArray) -> String:
+	for entry in args:
+		var a := String(entry)
+		if not a.begins_with("--spawn="):
+			continue
+		var kind := a.substr("--spawn=".length())
+		# Unknown ids are ignored rather than spawned, so a typo cannot become a
+		# crash in the middle of a tuning session.
+		return kind if Bots.CATALOG.has(kind) else ""
+	return ""
+
+func _spawn_dev_request() -> void:
+	var kind := dev_spawn(OS.get_cmdline_user_args())
+	if kind == "":
+		return
+	# Beside the hull and facing it, so the turret has something to traverse to the
+	# moment the run starts.
+	spawner.spawn(kind, drone.position + Vector2(240.0, 0.0) * Layout.unit)
 
 func _resume() -> void:
 	Game.toggle_pause()

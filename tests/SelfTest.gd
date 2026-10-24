@@ -95,7 +95,7 @@ func build_script() -> void:
 		_wait(0.8), _assert_bots_reach_their_pace,
 		_knockback_setup, _wait(0.15), _assert_turn_is_rate_limited,
 		_wait(1.25), _assert_turn_completes,
-		_tank_setup, _wait(0.4), _assert_tank_traverses, _assert_rocket_leaves_smoke,
+		_assert_dev_spawn_flag, _tank_setup, _wait(0.4), _assert_tank_traverses, _assert_rocket_leaves_smoke,
 		_splitter_setup, _wait(0.15), _assert_splitter_halves_scatter,
 		_assert_death_leaves_marks, _assert_grade_sits_behind_hud,
 		_cleanup_bots,
@@ -737,6 +737,17 @@ func _assert_rocket_balanced() -> void:
 	var radius := DroidFire.ROCKET_SPEED / DroidFire.ROCKET_TURN
 	report("but its turn radius is wide enough to dodge", radius > 180.0,
 		 "%.0f units" % radius)
+
+## The dev launch flag is the only way to see a Tank before its 70 s gate, so its
+## parsing and its refusal of an unknown id are worth pinning down.
+func _assert_dev_spawn_flag() -> void:
+	report("the --spawn= flag names the bot",
+		String(main.call("dev_spawn", PackedStringArray(["--debug", "--spawn=tank"])))
+		== "tank")
+	report("and is empty when it was not asked for",
+		String(main.call("dev_spawn", PackedStringArray(["--debug"]))) == "")
+	report("a flag for a bot that does not exist is ignored",
+		String(main.call("dev_spawn", PackedStringArray(["--spawn=hauler2"]))) == "")
 
 func _tank_setup() -> void:
 	var unit: float = Layout.unit
