@@ -71,6 +71,7 @@ var pickups: Array = []
 var shake := 0.0
 var fx_clock := 0.0
 var _perf_timer := 0.0
+var _perf_draws := 0
 var dead_time := 0.0
 var pending_revive := false
 var debug := false
@@ -233,14 +234,22 @@ func _process(delta: float) -> void:
 		_perf_timer += delta
 		if _perf_timer >= 1.0:
 			_perf_timer = 0.0
-			# The whole map is one CanvasItem, so the cost of a detail pass shows up
-			# as primitives per frame rather than draw calls. Print it: the ground is
-			# prettier than it is cheap now, and that trade needs watching.
-			print("perf fps=%d  primitives=%d  draw_calls=%d  props=%d  cells=%d  droids=%d" % [
-				Engine.get_frames_per_second(),
+			# `ground` is typed as Node2D, so these return Variant and every slot
+			# needs an explicit type: GDScript cannot infer from a Variant subtraction.
+			var dps: int = int(ground.draw_count()) - _perf_draws
+			_perf_draws = int(ground.draw_count())
+			# The whole map is one CanvasItem, so the cost that matters is how long a
+			# full redraw takes and how many per second it is asked for. The canopy
+			# detail pass is prettier than it is cheap, and this is the number that
+			# says whether a phone can afford it.
+			print("perf fps=%d  ground_draw=%.0fus x%d/s  primitives=%d  draw_calls=%d  props=%d  cells=%d  droids=%d" % [
+				Engine.get_frames_per_second(), float(ground.avg_draw_us()), dps,
 				int(Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME)),
 				int(Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME)),
 				ground.props_in_view(), ground.cells_in_view(), Game.live_droids])
+			var ph: Dictionary = ground.phase_us()
+			print("perf phases cells=%.0f river=%.0f roads=%.0f placed=%.0f us" % [
+				ph["cells"], ph["river"], ph["roads"], ph["props"]])
 
 func _shake(seconds: float) -> void:
 	shake = maxf(shake, seconds)

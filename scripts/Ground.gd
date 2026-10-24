@@ -20,11 +20,18 @@ const ANIM_FPS := 45.0
 ## inside it bends away from the hull, so flying low over a wood is something you
 ## watch happen rather than something you only hear about.
 const DOWNWASH := 210.0
+## Vertices in a leaf mass outline. Enough to read as a scalloped crown, few
+## enough that a whole wood costs less than one circle stack did.
+const BLOB_STEPS := 22
+## Foliage is redrawn at this rate rather than every frame: wind at 30 fps looks
+## the same as wind at 60, and the ground is the most expensive item on screen.
+const WIND_HZ := 30.0
 
 var seed_value: int = GroundDef.SEED
 var _placed: Array = []
 var _quantized := Vector2(INF, INF)
 var _wind := 0.0
+var _wind_timer := 0.0
 var _anim := true
 var _manual := false
 var _fps_timer := 0.0
@@ -32,6 +39,14 @@ var _cells_drawn := 0
 var _props_drawn := 0
 var _detailed := true
 var _drone_at := Vector2.INF
+## Cost accounting for the debug overlay: the whole map is one CanvasItem, so the
+## only thing that matters is how long a full redraw takes and how often it runs.
+var _draw_us := 0.0
+var _draw_count := 0
+## Temporary phase breakdown, printed only by the debug overlay. The whole map is
+## one CanvasItem, so this is where a 28 ms redraw either gets explained or gets
+## fixed.
+var _us := {"cells": 0.0, "river": 0.0, "roads": 0.0, "props": 0.0}
 
 func _ready() -> void:
 	load_layout()
@@ -53,7 +68,10 @@ func _process(delta: float) -> void:
 				_anim = fps >= ANIM_FPS if not _anim else fps >= ANIM_FPS - 5.0
 	if _anim:
 		_wind += delta
-		queue_redraw()
+		_wind_timer += delta
+		if _wind_timer >= 1.0 / WIND_HZ:
+			_wind_timer = 0.0
+			queue_redraw()
 	else:
 		_on_view_changed()
 
@@ -91,6 +109,7 @@ func downwash_radius() -> float:
 
 # ------------------------------------------------------------------- drawing --
 func _draw() -> void:
+	var t0 := Time.get_ticks_usec()
 	var view: Rect2 = Layout.view.grow(CELL * 1.5)
 	# One lookup per redraw: every prop asks this same point for its gust, so a
 	# whole wood leans away from one hull rather than each tree inventing its own.
@@ -104,19 +123,45 @@ func _draw() -> void:
 	_detailed = _cells_drawn <= MAX_DETAIL_CELLS
 	_cells_drawn = 0
 	_props_drawn = 0
+	var t1 := Time.get_ticks_usec()
 	for cy in range(y0, y1 + 1):
 		for cx in range(x0, x1 + 1):
 			_cells_drawn += 1
 			_draw_cell(cx, cy)
+	_us["cells"] += float(Time.get_ticks_usec() - t1)
 	if GroundDef.ENABLED.get("river", true):
+		var t2 := Time.get_ticks_usec()
 		_draw_river(view)
+		_us["river"] += float(Time.get_ticks_usec() - t2)
 	if GroundDef.ENABLED.get("road", true):
+		var t3 := Time.get_ticks_usec()
 		_draw_roads(view)
+		_us["roads"] += float(Time.get_ticks_usec() - t3)
+	var t4 := Time.get_ticks_usec()
 	for prop in _placed:
 		_draw_prop(String(prop.get("type", "tree")),
 			Vector2(float(prop.get("x", 0.0)), float(prop.get("y", 0.0))),
 			float(prop.get("r", 0.0)), 0.0)
 		_props_drawn += 1
+	_us["props"] += float(Time.get_ticks_usec() - t4)
+	_draw_us += float(Time.get_ticks_usec() - t0)
+	_draw_count += 1
+
+## Microseconds of the last redraw averaged over all of them, and how many have
+## run. Together they say whether the detail pass is affordable at the frame rate
+## the phone is actually holding.
+func avg_draw_us() -> float:
+	return _draw_us / maxf(1.0, float(_draw_count))
+
+func draw_count() -> int:
+	return _draw_count
+
+func phase_us() -> Dictionary:
+	var n := maxf(1.0, float(_draw_count))
+	var out := {}
+	for k in _us:
+		out[k] = _us[k] / n
+	return out
 
 func _draw_cell(cx: int, cy: int) -> void:
 	var base := Vector2(cx * CELL, cy * CELL)
@@ -447,16 +492,29 @@ func _n(v: int, salt: int) -> float:
 	return float(x & 0xFFFF) / 65535.0
 
 # ------------------------------------------------------------------ planting --
+## One scalloped blob, used for every leaf mass on the map. A Ghibli canopy reads
+## as a single volume with a bumpy edge rather than as stacked circles, and it
+## costs BLOB_STEPS triangles where a stack of lobes cost hundreds. The radius
+## only ever wobbles around the centre, so the outline is star-shaped and cannot
+## fold over itself -- which is what the triangulator refuses, with an error.
+func _blob(at: Vector2, radius: float, wobble: float, scallops: float,
+		tone: Color, twist: float = 0.0) -> void:
+	var pts := PackedVector2Array()
+	for i in BLOB_STEPS:
+		var a := TAU * float(i) / float(BLOB_STEPS)
+		var r := radius * (1.0 - wobble * 0.5 * (1.0 - cos(a * scallops + twist)))
+		pts.append(at + Vector2.RIGHT.rotated(a) * r)
+	draw_colored_polygon(pts, tone)
 ## A per-plant noise stream. Keyed on position rather than on the cell hash so a
 ## hand-placed tree gets the same irregular crown as a scattered one.
 func _plant_salt(at: Vector2) -> int:
 	return int(at.x * 127.1 + at.y * 311.7)
 
-## Broadleaf tree, painted rather than drawn as a shape: an irregular silhouette
-## built from overlapping lobes, three tones deep (underside shadow, leaf body,
-## sunlit outer mass), a warm rim where the light grazes the top, and dapples of
-## lighter leaf clusters inside the lit side. That layering is what a single
-## circle with a highlight never gets: the canopy reads as a volume of leaves.
+## Broadleaf tree: three nested scalloped masses -- underside shadow, leaf body,
+## sunlit outer mass -- then dapples of lighter leaf clusters on the lit side.
+## Layered tone bands are what the eye reads as a volume of leaves; a circle with
+## a highlight on it is a green disc. Measured cost decided the method: the same
+## three tones built from overlapping circles doubled the ground's redraw time.
 func _draw_tree(at: Vector2, radius: float, leaf: Color, lit: Color,
 		trunk: Color) -> void:
 	var salt := _plant_salt(at)
@@ -489,49 +547,27 @@ func _draw_tree(at: Vector2, radius: float, leaf: Color, lit: Color,
 			Art.shaded(trunk, 0.9), maxf(1.0, radius * 0.075))
 	Art.contact(self, at, radius * 0.32, 0.85)
 
-	var lobes := 7 if _detailed else 3
-	var centres: Array = []
-	var radii: Array = []
-	for i in lobes:
-		var a := float(i) / float(lobes) * TAU + _n(salt, 1) * 0.6
-		var rr := radius * (0.44 + _n(salt, 20 + i) * 0.26)
-		var off := Vector2.RIGHT.rotated(a) * radius * (0.3 + _n(salt, 2 + i) * 0.34)
-		off += Vector2.RIGHT.rotated(a) * Art.sway(_wind, a + at.x * 0.01, radius * 0.05)
-		centres.append(crown + off)
-		radii.append(rr)
 	var shade := Art.shaded(leaf, 1.2)
 	var sun := Art.sunlit(lit)
-	for i in centres.size():
-		# Underside first: the shadow the canopy casts on itself is what separates
-		# a tree from a green disc.
-		draw_circle(centres[i] + Vector2(0.0, radii[i] * 0.26), radii[i], shade)
-	for i in centres.size():
-		draw_circle(centres[i], radii[i] * 0.97, leaf)
-	for i in centres.size():
-		var c: Vector2 = centres[i]
-		var r2: float = radii[i]
-		if not _is_lit(c - crown):
-			continue
-		draw_circle(c + Art.lit_offset(r2 * 0.3), r2 * 0.78, sun)
+	var scallops: float = 5.0 + floor(_n(salt, 4) * 3.0)
+	# Three nested bands, each one higher and lighter than the last, twisted
+	# differently so their scalloped edges never line up into one contour.
+	_blob(crown + Vector2(0.0, radius * 0.10), radius, 0.26, scallops, shade)
+	_blob(crown - Vector2(0.0, radius * 0.05), radius * 0.93, 0.24, scallops, leaf, 1.05)
+	_blob(crown + Art.lit_offset(radius * 0.3) - Vector2(0.0, radius * 0.08),
+		radius * 0.66, 0.22, scallops, sun, 2.15)
 	if not _detailed:
 		return
-	for i in centres.size():
-		var c2: Vector2 = centres[i]
-		var r3: float = radii[i]
-		if not _is_lit(c2 - crown):
-			continue
-		# Rim light: a short bright arc on the outer edge of the lit lobes only.
-		draw_arc(c2, r3 * 0.96, (-Art.SUN).angle() - 0.75, (-Art.SUN).angle() + 0.75,
-			9, Art.sunlit(lit, 1.8).lerp(Color(1.0, 1.0, 0.9), 0.3),
-			maxf(1.2, r3 * 0.13), true)
-	for i in 7:
-		# Dapples: leaf clusters catching the light inside the mass.
+	for i in 5:
+		# Dapples: leaf clusters catching the light inside the lit mass.
 		var a2 := _n(salt, 40 + i) * TAU
 		var dir := Vector2.RIGHT.rotated(a2)
-		var spot := crown + dir * radius * (0.15 + _n(salt, 50 + i) * 0.7)
-		var tone := sun if (-Art.SUN).dot(dir) > 0.0 else shade
-		draw_circle(spot, radius * (0.05 + _n(salt, 60 + i) * 0.07),
-			Color(tone.r, tone.g, tone.b, 0.85))
+		var lit_side := dir.dot(-Art.SUN) > 0.15
+		var spot := crown + dir * radius * ((0.1 + _n(salt, 50 + i) * 0.58)
+			if lit_side else (0.06 + _n(salt, 50 + i) * 0.3))
+		var tone := sun if lit_side else shade
+		draw_circle(spot, radius * (0.05 + _n(salt, 60 + i) * 0.06),
+			Color(tone.r, tone.g, tone.b, 0.8))
 	if g > 0.2:
 		# Leaves shaken loose, tumbling down and away on the same air the hull pushes.
 		for i in 4:
@@ -541,11 +577,6 @@ func _draw_tree(at: Vector2, radius: float, leaf: Color, lit: Color,
 			var leaf_at := crown + drift + Vector2(0.0, t * radius * 1.5)
 			draw_circle(leaf_at, radius * 0.05 * (1.0 - t) + 0.9,
 				Color(sun.r, sun.g, sun.b, (1.0 - t) * g * 0.8))
-
-## True when this part of the crown faces the light. Art.SUN is the direction
-## shadows fall, so the lit side is the opposite one.
-func _is_lit(offset: Vector2) -> bool:
-	return offset.dot(-Art.SUN) > 0.0
 
 ## Conifer: tiers with a zig-zag lower edge, because needles hang in clumps and a
 ## straight line reads as a paper cut-out. Each tier is dark on the whole and
@@ -585,22 +616,12 @@ func _draw_bush(at: Vector2, radius: float, leaf: Color, lit: Color,
 	var salt := _plant_salt(at)
 	var push := downwash(at, _drone_at, radius * 0.8)
 	Art.soft_shadow(self, at + push * 0.4, radius * 0.95, radius * 0.6)
-	var shade := Art.shaded(leaf, 1.15)
-	var sun := Art.sunlit(lit)
-	for i in 4:
-		var a := float(i) / 4.0 * TAU + _n(salt, 3) * 0.8
-		var off := Vector2.RIGHT.rotated(a) * radius * 0.42
-		var sway_off := Vector2(Art.sway(_wind, at.x * 0.02 + float(i), radius * 0.1)
-			+ push.x, -radius * 0.1)
-		draw_circle(at + off + sway_off + Vector2(0.0, radius * 0.16), radius * 0.62,
-			shade)
-	for i in 4:
-		var a2 := float(i) / 4.0 * TAU + _n(salt, 3) * 0.8
-		var off2 := Vector2.RIGHT.rotated(a2) * radius * 0.42
-		var sway2 := Vector2(Art.sway(_wind, at.x * 0.02 + float(i), radius * 0.1)
-			+ push.x, -radius * 0.1)
-		draw_circle(at + off2 + sway2, radius * 0.58, leaf)
-		if _is_lit(off2):
-			draw_circle(at + off2 + sway2 + Art.lit_offset(radius * 0.2), radius * 0.34,
-				sun)
+	var drift := Vector2(Art.sway(_wind, at.x * 0.02, radius * 0.12) + push.x,
+		-radius * 0.08)
+	var scallops: float = 4.0 + floor(_n(salt, 6) * 2.0)
+	_blob(at + drift + Vector2(0.0, radius * 0.14), radius * 1.05, 0.3, scallops,
+		Art.shaded(leaf, 1.15))
+	_blob(at + drift, radius * 0.9, 0.28, scallops, leaf, 1.2)
+	_blob(at + drift + Art.lit_offset(radius * 0.26), radius * 0.56, 0.24, scallops,
+		Art.sunlit(lit), 2.4)
 	Art.contact(self, at, radius * 0.4, 0.7)
