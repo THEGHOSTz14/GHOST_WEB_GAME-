@@ -48,7 +48,7 @@ scripts/v3/View3D.gd       optional 3D presentation layer over the same sim
 
 platform/html_shell.html   exported page: y8 SDK + bridge + engine bootstrap
 platform/y8_bridge.js      window.DvDY8 -- the JS half of Y8Api
-tests/SelfTest.tscn        115 headless gameplay assertions
+tests/SelfTest.tscn        118 headless gameplay assertions
 assets/drone/              drone body + prop sprites (see assets/CREDITS.md)
 tools/                     build, serve, test, template-fetch, art prep
 builds/web/                exported page        builds/y8/*.zip  portal upload
@@ -132,11 +132,12 @@ export GODOT_BIN="/c/Users/Asus/AppData/Local/Programs/Godot/Godot_v4.7.2-stable
 |---|---|
 | `"$GODOT_BIN" --editor --path .` | open the project in the editor |
 | `"$GODOT_BIN" --path .` | run it as a desktop window |
-| `bash tools/run_tests.sh` | 115 assertions; fails on any engine error in the log |
+| `bash tools/run_tests.sh` | 118 assertions; fails on any engine error in the log |
 | `bash tools/build_web.sh` | headless release export → `builds/web/` + zip |
 | `bash tools/build_web.sh --debug` | same with debug templates (verbose console) |
 | `bash tools/build_web.sh --gz` | also emit `.gz` siblings for hosts that need them |
 | `python tools/serve_web.py` | serve at http://127.0.0.1:8060/ like a portal would |
+| `godot --path . -- --spawn=tank` | dev-only: start a run with that bot beside the hull. A browser cannot pass arguments, so a portal build can never get it |
 | `"$GODOT_BIN" --headless --path . --quit-after 5` | fast parse/boot check |
 
 `serve_web.py` deliberately sends **no** COOP/COEP headers. y8 sends none
